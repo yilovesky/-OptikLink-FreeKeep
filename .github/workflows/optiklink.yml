@@ -22,7 +22,7 @@ jobs:
       - name: 📦 安装依赖
         run: |
           npm init -y
-          npm install @playwright/test
+          npm install @playwright/test form-data
 
       - name: 🌐 安装 Playwright 浏览器
         run: npx playwright install chromium --with-deps
