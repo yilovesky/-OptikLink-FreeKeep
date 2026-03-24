@@ -19,6 +19,17 @@ function nowStr() {
     }).replace(/\//g, '-');
 }
 
+// 辅助函数：转义 HTML 字符，防止 TG 400 错误
+function escapeHtml(text) {
+    if (!text) return "";
+    return text.toString()
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 // --- [核心修改：UI 风格的 TG 通知函数 - 修复 400 错误版] ---
 async function sendUITGReport(page, result, serverName) {
     if (!TG_CHAT_ID || !TG_TOKEN) {
@@ -36,18 +47,18 @@ async function sendUITGReport(page, result, serverName) {
         console.log(`[-] 截图失败: ${e.message}`);
     }
 
-    // 2. 构造符合截图风格的 HTML 文字内容
+    // 2. 构造符合截图风格的 HTML 文字内容 (进行 HTML 转义)
     const reportContent = [
         `✅ <b>OptikLink 自动化续期报告</b>`,
         `━━━━━━━━━━━━━━━━━━`,
-        `👤 账户：<code>${panelUser}</code>`,
-        `🛰️ 状态：${result} ✅`,
-        `🖥 服务器：<b>${serverName}</b>`,
-        `🕒 北京时间：<code>${beijingTime}</code>`,
+        `👤 账户：<code>${escapeHtml(panelUser)}</code>`,
+        `🛰️ 状态：${escapeHtml(result)} ✅`,
+        `🖥 服务器：<b>${escapeHtml(serverName)}</b>`,
+        `🕒 北京时间：<code>${escapeHtml(beijingTime)}</code>`,
         `━━━━━━━━━━━━━━━━━━`
     ].join('\n');
 
-    // 3. 使用 multipart/form-data 发送图片 (修复 400 参数格式)
+    // 3. 使用 multipart/form-data 发送图片
     const FormData = require('form-data');
     const form = new FormData();
     form.append('chat_id', TG_CHAT_ID);
@@ -92,7 +103,7 @@ async function sendUITGReport(page, result, serverName) {
     });
 }
 
-// 修改后的 Token 注入登录函数
+// 修改后的 Token 注入登录函数 (核心修复：解决 SyntaxError)
 async function handleDiscordLoginWithToken(page, token) {
     console.log('[*] 正在执行 Token 强制同步注入...');
     await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded' });
@@ -100,22 +111,22 @@ async function handleDiscordLoginWithToken(page, token) {
     // 坑1：等待页面脚本加载
     await page.waitForTimeout(8000);
 
-    const injectScript = `
-    function login(token) {
-        var timer = setInterval(() => {
-            try {
-                document.body.appendChild(document.createElement('iframe')).contentWindow.localStorage.token = '"' + token + '"';
-            } catch(e) {}
-        }, 50);
-        setTimeout(() => {
-            clearInterval(timer);
-            location.reload();
-        }, 2500);
-    }
-    login("${token}");
-    `;
+    // 修复：使用匿名箭头函数传参注入，避免 'login' 标识符识别错误
+    await page.evaluate((t) => {
+        const injector = (tokenStr) => {
+            const timer = setInterval(() => {
+                try {
+                    document.body.appendChild(document.createElement('iframe')).contentWindow.localStorage.token = `"${tokenStr}"`;
+                } catch(e) {}
+            }, 50);
+            setTimeout(() => {
+                clearInterval(timer);
+                location.reload();
+            }, 2500);
+        };
+        injector(t);
+    }, token);
     
-    await page.evaluate(injectScript);
     // 坑3：注入后强制刷新等待同步
     await page.waitForTimeout(12000);
 
