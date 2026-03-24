@@ -69,10 +69,12 @@ async function sendUITGReport(page, result, serverName) {
     const reportContent = [
         `✅ <b>OptikLink 自动化续期报告</b>`,
         `━━━━━━━━━━━━━━━━━━`,
-        `👤 账户：<code>${escapeHtml(panelUser)}</code>`,
+        // 给账户名外层套上 <b> 标签
+        `👤 账户：<b><code>${escapeHtml(panelUser)}</code></b>`, 
         `🛰️ 状态：${escapeHtml(result)} ✅`,
         `🖥 服务器：<b>${escapeHtml(serverName)}</b>`,
-        `🕒 北京时间：<code>${escapeHtml(beijingTime)}</code>`,
+        // 给北京时间外层套上 <b> 标签
+        `🕒 北京时间：<b><code>${escapeHtml(beijingTime)}</code></b>`,
         `━━━━━━━━━━━━━━━━━━`
     ].join('\n');
 
@@ -447,7 +449,7 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
         if (statusText.toLowerCase().includes('running')) {
             console.log('🎉 保活成功！');
-            await sendUITGReport(serverPage, '续期成功', serverInfo.name);
+            await sendUITGReport(serverPage, statusText.trim(), serverInfo.name);
         } else if (statusText.toLowerCase().includes('offline') || statusText.toLowerCase().includes('stopped')) {
             console.log('⚠️ 服务器离线，尝试启动...');
             await serverPage.click('button:has-text("Start")');
@@ -466,7 +468,8 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
             if (started) {
                 console.log('✅ 服务器已成功启动！');
-                await sendUITGReport(serverPage, '启动并续期成功', serverInfo.name);
+                const latestStatus = await serverPage.locator('p.sc-168cvuh-1').innerText().catch(() => 'RUNNING');
+                await sendUITGReport(serverPage, latestStatus.trim(), serverInfo.name);
             } else {
                 console.log('❌ 等待超时，服务器未能启动');
                 await sendUITGReport(serverPage, '启动失败', serverInfo.name);
