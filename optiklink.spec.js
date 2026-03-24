@@ -19,7 +19,7 @@ function nowStr() {
     }).replace(/\//g, '-');
 }
 
-// --- [核心修改：UI 风格的 TG 通知函数] ---
+// --- [核心修改：UI 风格的 TG 通知函数 - 修复 400 错误版] ---
 async function sendUITGReport(page, result, serverName) {
     if (!TG_CHAT_ID || !TG_TOKEN) {
         console.log('⚠️ TG_BOT 未配置，跳过推送');
@@ -47,26 +47,48 @@ async function sendUITGReport(page, result, serverName) {
         `━━━━━━━━━━━━━━━━━━`
     ].join('\n');
 
-    // 3. 使用 multipart/form-data 发送图片
+    // 3. 使用 multipart/form-data 发送图片 (修复 400 参数格式)
     const FormData = require('form-data');
     const form = new FormData();
     form.append('chat_id', TG_CHAT_ID);
     form.append('caption', reportContent);
     form.append('parse_mode', 'HTML');
+    
     if (fs.existsSync(photoPath)) {
         form.append('photo', fs.createReadStream(photoPath));
     } else {
-        // 如果截图失败，降级发送纯文字
         console.log("⚠️ 截图文件不存在，尝试发送纯文字报告");
     }
 
     return new Promise((resolve) => {
-        form.submit(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, (err, res) => {
-            if (err) console.log(`⚠️ TG 推送异常: ${err.message}`);
-            else console.log(`📨 UI 报告推送成功: ${res.statusCode}`);
-            if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath); // 清理临时文件
+        const options = {
+            method: 'POST',
+            host: 'api.telegram.org',
+            path: `/bot${TG_TOKEN}/sendPhoto`,
+            headers: form.getHeaders(),
+        };
+
+        const req = https.request(options, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    console.log(`📨 UI 报告推送成功: ${res.statusCode}`);
+                } else {
+                    console.log(`📨 UI 报告推送失败: ${res.statusCode}, 响应: ${body}`);
+                }
+                if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath);
+                resolve();
+            });
+        });
+
+        req.on('error', (err) => {
+            console.log(`⚠️ TG 推送异常: ${err.message}`);
+            if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath);
             resolve();
         });
+
+        form.pipe(req);
     });
 }
 
@@ -375,7 +397,6 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
         if (statusText.toLowerCase().includes('running')) {
             console.log('🎉 保活成功！');
-            // --- [核心替换：发送 UI 报告] ---
             await sendUITGReport(serverPage, '续期成功', serverInfo.name);
         } else if (statusText.toLowerCase().includes('offline') || statusText.toLowerCase().includes('stopped')) {
             console.log('⚠️ 服务器离线，尝试启动...');
@@ -412,7 +433,6 @@ test('OptikLink 保活', async ({ }, testInfo) => {
             await testInfo.attach('failure', { path: screenshotPath, contentType: 'image/png' });
             console.log('📸 失败截图已保存');
         } catch { /* 截图失败不影响主流程 */ }
-        // 报错也发送带图报告
         await sendUITGReport(activePage, `脚本异常: ${e.message}`, 'ERROR');
         throw e;
 
