@@ -31,6 +31,21 @@ function escapeHtml(text) {
         .replace(/'/g, "&#039;");
 }
 
+// --- [核心修改：智能 Cloudflare 穿透函数] ---
+async function handleCloudflare(page) {
+    const cfFrame = page.frameLocator('iframe[src*="cloudflare"]');
+    try {
+        const checkbox = cfFrame.locator('input[type="checkbox"]');
+        if (await checkbox.isVisible({ timeout: 5000 })) {
+            console.log('🛡️ 检测到 Cloudflare 验证码，尝试自动穿透...');
+            await checkbox.click().catch(() => {});
+            await page.waitForTimeout(5000); 
+            return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
 // --- [核心修改：UI 风格的 TG 通知函数 - 修复 400 错误版] ---
 async function sendUITGReport(page, result, serverName) {
     if (!TG_CHAT_ID || !TG_TOKEN) {
@@ -113,6 +128,9 @@ async function handleDiscordLoginWithToken(page, token) {
     console.log('[*] 正在通过直达链接执行 Token 强制同步注入...');
     await page.goto(DIRECT_AUTH_URL, { waitUntil: 'domcontentloaded' });
     
+    // 登录前潜在验证码检测
+    await handleCloudflare(page);
+
     // 坑1：等待页面脚本加载
     await page.waitForTimeout(8000);
 
@@ -134,10 +152,6 @@ async function handleDiscordLoginWithToken(page, token) {
     
     // 坑3：注入后刷新，直达链接会自动跳转到授权页
     await page.waitForTimeout(15000);
-
-    if (page.url().includes('discord.com/login') && !page.url().includes('redirect_to')) {
-        throw new Error("❌ Token 注入后未能跳转，请检查 Token 是否有效");
-    }
 }
 
 // 处理 Discord OAuth 授权页 (保持原样)
@@ -221,7 +235,7 @@ test('OptikLink 保活', async ({ }, testInfo) => {
     let activePage = page;
 
     await page.addInitScript(() => {
-        if (!location.hostname.includes('optiklink.net')) return;
+        if (!location.hostname.includes('optiklink')) return;
 
         const AD_DOMAINS = [
             'tzegilo.com', 'alwingulla.com', 'auqot.com', 'jmosl.com', '094kk.com',
@@ -277,7 +291,7 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         const _open = window.open.bind(window);
         window.open = function (url, ...args) {
             if (!url) return null;
-            if (url.startsWith('/') || url.includes('optiklink.net')) return _open(url, ...args);
+            if (url.startsWith('/') || url.includes('optiklink')) return _open(url, ...args);
             return null;
         };
 
@@ -306,17 +320,15 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         try {
             const res = await page.goto('https://api.ipify.org?format=json', { waitUntil: 'domcontentloaded' });
             const body = await res.text();
-            const ip = JSON.parse(body).ip || body;
-            const masked = ip.replace(/(\d+\.\d+\.\d+\.)\d+/, '$1xx');
-            console.log(`✅ 出口 IP 确认：${masked}`);
+            console.log(`✅ 出口 IP 确认：${JSON.parse(body).ip || body}`);
         } catch {
             console.log('⚠️ IP 验证超时，跳过');
         }
 
-        // --- 开始 Token 登录闭环 (集成直达链接) ---
+        // --- 开始 Token 登录闭环 ---
         await handleDiscordLoginWithToken(page, DISCORD_TOKEN);
 
-        // 处理可能出现的 OAuth 授权页 (由于使用了直达链接，此处刷新后通常直接显示授权页)
+        // 处理可能出现的 OAuth 授权页
         console.log('⏳ 等待 OAuth 授权...');
         try {
             await page.waitForURL(/discord\.com\/oauth2\/authorize/, { timeout: 15000 });
@@ -327,16 +339,21 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         }
 
         console.log('⏳ 确认到达 OptikLink...');
+        
+        // 登录后潜在验证码检测 (处理截图中的人机验证)
+        await handleCloudflare(page);
+
         try {
-            await page.waitForURL(/optiklink\.net/, { timeout: 30000 });
+            await page.waitForURL(url => url.toString().includes('optiklink'), { timeout: 30000 });
         } catch { /* 可能已经在页面 */ }
 
-        if (!page.url().includes('optiklink.net')) {
+        if (!page.url().includes('optiklink.com') && !page.url().includes('optiklink.net')) {
             throw new Error(`❌ 未到达 OptikLink，当前 URL: ${page.url()}`);
         }
         console.log(`✅ 登录成功！当前：${page.url()}`);
 
         console.log('📤 点击 Login to Panel...');
+        await page.waitForLoadState('networkidle');
         await page.click('a[data-target="#logintopanel"]');
         await page.waitForTimeout(2000);
 
@@ -439,7 +456,7 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
     } catch (e) {
         console.log(`❌ 异常: ${e.message}`);
-        // 报错也尝试发送带图报告，但增加安全性判断
+        // 报错也尝试发送带图报告
         try {
             if (activePage && !activePage.isClosed()) {
                 await sendUITGReport(activePage, `脚本异常: ${e.message}`, 'ERROR');
