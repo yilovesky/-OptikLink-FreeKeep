@@ -230,7 +230,8 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         headless: true,
         proxy: proxyConfig,
     });
-    const page = await browser.newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     page.setDefaultTimeout(TIMEOUT);
     let activePage = page;
 
@@ -325,7 +326,7 @@ test('OptikLink 保活', async ({ }, testInfo) => {
             console.log('⚠️ IP 验证超时，跳过');
         }
 
-        // --- 开始 Token 登录闭环 (集成直达链接) ---
+        // --- 开始 Token 登录闭环 ---
         await handleDiscordLoginWithToken(page, DISCORD_TOKEN);
 
         // 处理可能出现的 OAuth 授权页
@@ -340,7 +341,8 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
         console.log('⏳ 确认到达 OptikLink...');
         
-        // 登录后潜在验证码检测 (处理授权跳转后的拦截)
+        // 登录后潜在验证码检测 (处理截图中的人机验证)
+        await page.waitForTimeout(5000);
         await handleCloudflare(page);
 
         try {
@@ -353,18 +355,25 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         console.log(`✅ 登录成功！当前：${page.url()}`);
 
         console.log('📤 点击 Login to Panel...');
-        // 等待 5 秒让 Cloudflare 状态彻底写进 Cookie
-        await page.waitForTimeout(5000); 
-        const panelBtnSelector = 'a[data-target="#logintopanel"]';
-        await page.waitForSelector(panelBtnSelector, { state: 'attached', timeout: 20000 });
+        await page.waitForLoadState('networkidle');
+        
+        // 使用 evaluate 强制点击模态框触发器，避开透明广告层
+        const modalBtnSelector = 'a[data-target="#logintopanel"]';
+        await page.waitForSelector(modalBtnSelector, { state: 'attached', timeout: 20000 });
+        await page.evaluate((sel) => {
+            const btn = document.querySelector(sel);
+            if (btn) btn.click();
+        }, modalBtnSelector);
+        await page.waitForTimeout(3000);
 
-        // 强行使用底层 JS 点击，彻底避开透明广告层
+        console.log('📤 点击 Panel Login...');
+        // 核心：捕获因为 target="_blank" 而产生的新页面
         const [panelPage] = await Promise.all([
-            page.context().waitForEvent('page'),
-            page.evaluate((sel) => {
-                const btn = document.querySelector(sel);
-                if (btn) btn.click();
-            }, panelBtnSelector),
+            context.waitForEvent('page'),
+            page.evaluate(() => {
+                const finalBtn = document.querySelector('a[href*="control.optiklink.net/auth/login"]');
+                if (finalBtn) finalBtn.click();
+            }),
         ]);
 
         panelPage.setDefaultTimeout(TIMEOUT);
