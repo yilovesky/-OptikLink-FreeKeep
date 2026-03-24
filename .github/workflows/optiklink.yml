@@ -1,44 +1,60 @@
-name: OptikLink 保活任务
+name: 🎮 OptikLink-Keep-Ultra
 
 on:
-  workflow_dispatch:      # 允许手动点击运行
   schedule:
-    - cron: '0 */6 * * *'  # 每 6 小时自动运行一次（可根据需要修改）
+    - cron: '0 1 */2 * *'  # 每 2 天运行一次
+  workflow_dispatch:      # 支持手动触发
 
 jobs:
-  run-bot:
+  keepalive:
+    name: 🔄 执行保活
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
-      - name: 📥 获取代码
+      - name: 📥 拉取代码
         uses: actions/checkout@v4
 
       - name: 🟢 安装 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: '22'
 
-      - name: 📦 安装项目依赖
-        run: npm install
+      - name: 📦 安装依赖
+        run: |
+          npm init -y
+          npm install @playwright/test
 
-      - name: 🎭 安装 Playwright 浏览器
+      - name: 🌐 安装 Playwright 浏览器
         run: npx playwright install chromium --with-deps
 
-      - name: 🚀 执行保活脚本
+      - name: 🛡️ 启动 GOST 代理转发
         env:
-          # 这里关联你在 GitHub Settings -> Secrets 中设置的变量
+          GOST_PROXY: ${{ secrets.GOST_PROXY }}
+        if: env.GOST_PROXY != ''
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/ginuerzh/gost/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
+          echo "📦 GOST 版本: $VERSION"
+          wget -q "https://github.com/ginuerzh/gost/releases/download/v${VERSION}/gost_${VERSION}_linux_amd64.tar.gz"
+          tar -xzf "gost_${VERSION}_linux_amd64.tar.gz"
+          chmod +x gost
+          nohup ./gost -L http://:8080 -F "$GOST_PROXY" > gost.log 2>&1 &
+          sleep 5
+          echo "✅ GOST 已启动，测试连通性..."
+          curl -s -x http://127.0.0.1:8080 https://api.ipify.org | sed 's/\([0-9]*\.[0-9]*\.[0-9]*\.\)[0-9]*/\1**/g'
+
+      - name: 🚀 运行保活脚本
+        env:
+          # --- 核心改动：只传 Token ---
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           PANEL_ACCOUNT: ${{ secrets.PANEL_ACCOUNT }}
           TG_BOT: ${{ secrets.TG_BOT }}
-          # 如果你有代理，取消下面这行的注释并填入
-          # GOST_PROXY: ${{ secrets.GOST_PROXY }} 
+          GOST_PROXY: http://127.0.0.1:8080
         run: npx playwright test tests/optiklink.spec.js
 
-      - name: 📸 上传失败截图 (如果报错)
+      - name: 📸 上传失败截图
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: playwright-report/
+          name: failure-screenshots
+          path: test-results/
           retention-days: 7
