@@ -230,7 +230,9 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         headless: true,
         proxy: proxyConfig,
     });
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(TIMEOUT);
     let activePage = page;
@@ -345,9 +347,18 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         await page.waitForTimeout(5000);
         await handleCloudflare(page);
 
+        const modalBtnSelector = 'a[data-target="#logintopanel"]';
+        
+        // 核心修复：如果长时间没看到按钮，强行刷新以破解 Cloudflare 的加载黑洞
         try {
-            await page.waitForURL(url => url.toString().includes('optiklink'), { timeout: 30000 });
-        } catch { /* 可能已经在页面 */ }
+            await page.waitForSelector(modalBtnSelector, { state: 'attached', timeout: 15000 });
+        } catch (e) {
+            console.log('⚠️ 按钮未渲染，可能是白屏拦截，尝试刷新页面...');
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.waitForTimeout(5000);
+            await handleCloudflare(page);
+            await page.waitForSelector(modalBtnSelector, { state: 'attached', timeout: 20000 });
+        }
 
         if (!page.url().includes('optiklink.com') && !page.url().includes('optiklink.net')) {
             throw new Error(`❌ 未到达 OptikLink，当前 URL: ${page.url()}`);
@@ -358,8 +369,6 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         await page.waitForLoadState('networkidle');
         
         // 使用 evaluate 强制点击模态框触发器，避开透明广告层
-        const modalBtnSelector = 'a[data-target="#logintopanel"]';
-        await page.waitForSelector(modalBtnSelector, { state: 'attached', timeout: 20000 });
         await page.evaluate((sel) => {
             const btn = document.querySelector(sel);
             if (btn) btn.click();
