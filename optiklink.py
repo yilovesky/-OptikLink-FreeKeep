@@ -1,8 +1,8 @@
 // tests/optiklink.spec.js
 const { test, chromium } = require('@playwright/test');
 const https = require('https');
+const fs = require('fs'); // 必须引入 fs 处理图片流
 
-const [email, password] = (process.env.DISCORD_ACCOUNT || ',').split(',');
 const [panelUser, panelPass] = (process.env.PANEL_ACCOUNT || ',').split(',');
 const [TG_CHAT_ID, TG_TOKEN] = (process.env.TG_BOT || ',').split(',');
 // 提取 Token
@@ -19,48 +19,54 @@ function nowStr() {
     }).replace(/\//g, '-');
 }
 
-function sendTG(result, serverName = 'OptikLink') {
+// --- [核心修改：UI 风格的 TG 通知函数] ---
+async function sendUITGReport(page, result, serverName) {
+    if (!TG_CHAT_ID || !TG_TOKEN) {
+        console.log('⚠️ TG_BOT 未配置，跳过推送');
+        return;
+    }
+
+    const beijingTime = nowStr();
+    const photoPath = `report_${Date.now()}.png`;
+
+    // 1. 截取当前页面截图
+    try {
+        await page.screenshot({ path: photoPath, fullPage: false });
+    } catch (e) {
+        console.log(`[-] 截图失败: ${e.message}`);
+    }
+
+    // 2. 构造符合截图风格的 HTML 文字内容
+    const reportContent = [
+        `✅ <b>OptikLink 自动化续期报告</b>`,
+        `━━━━━━━━━━━━━━━━━━`,
+        `👤 账户：<code>${panelUser}</code>`,
+        `🛰️ 状态：${result} ✅`,
+        `🖥 服务器：<b>${serverName}</b>`,
+        `🕒 北京时间：<code>${beijingTime}</code>`,
+        `━━━━━━━━━━━━━━━━━━`
+    ].join('\n');
+
+    // 3. 使用 multipart/form-data 发送图片
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('chat_id', TG_CHAT_ID);
+    form.append('caption', reportContent);
+    form.append('parse_mode', 'HTML');
+    if (fs.existsSync(photoPath)) {
+        form.append('photo', fs.createReadStream(photoPath));
+    } else {
+        // 如果截图失败，降级发送纯文字
+        console.log("⚠️ 截图文件不存在，尝试发送纯文字报告");
+    }
+
     return new Promise((resolve) => {
-        if (!TG_CHAT_ID || !TG_TOKEN) {
-            console.log('⚠️ TG_BOT 未配置，跳过推送');
-            return resolve();
-        }
-
-        const msg = [
-            `🎮 OptikLink 保活通知`,
-            `🕐 运行时间: ${nowStr()}`,
-            `🖥 服务器: ${serverName}`,
-            `📊 执行结果: ${result}`,
-        ].join('\n');
-
-        const body = JSON.stringify({ chat_id: TG_CHAT_ID, text: msg });
-        const req = https.request({
-            hostname: 'api.telegram.org',
-            path: `/bot${TG_TOKEN}/sendMessage`,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-        }, (res) => {
-            if (res.statusCode === 200) {
-                console.log('📨 TG 推送成功');
-            } else {
-                console.log(`⚠️ TG 推送失败：HTTP ${res.statusCode}`);
-            }
+        form.submit(`https://api.telegram.org/bot${TG_TOKEN}/sendPhoto`, (err, res) => {
+            if (err) console.log(`⚠️ TG 推送异常: ${err.message}`);
+            else console.log(`📨 UI 报告推送成功: ${res.statusCode}`);
+            if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath); // 清理临时文件
             resolve();
         });
-
-        req.on('error', (e) => {
-            console.log(`⚠️ TG 推送异常：${e.message}`);
-            resolve();
-        });
-
-        req.setTimeout(15000, () => {
-            console.log('⚠️ TG 推送超时');
-            req.destroy();
-            resolve();
-        });
-
-        req.write(body);
-        req.end();
     });
 }
 
@@ -91,16 +97,9 @@ async function handleDiscordLoginWithToken(page, token) {
     // 坑3：注入后强制刷新等待同步
     await page.waitForTimeout(12000);
 
-    // 坑2：保底逻辑 (如果 Token 注入未直接跳转，尝试补充输入并执行 localStorage 强制写入)
+    // 如果注入后依然停留在登录页，说明 Token 可能失效
     if (page.url().includes('discord.com/login')) {
-        console.log('[!] 注入似乎未直接生效，执行保底混合登录...');
-        await page.fill('input[name="email"]', email);
-        await page.fill('input[name="password"]', password);
-        await page.evaluate((t) => {
-            window.localStorage.setItem('token', '"' + t + '"');
-        }, token);
-        await page.click('button[type="submit"]');
-        await page.waitForTimeout(10000);
+        throw new Error("❌ Token 注入后未能跳转，请检查 Token 是否有效或是否被 Discord 拦截");
     }
 }
 
@@ -376,7 +375,8 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
         if (statusText.toLowerCase().includes('running')) {
             console.log('🎉 保活成功！');
-            await sendTG('✅ 保活成功！\n💻 服务器状态：🚀 Running', serverInfo.name);
+            // --- [核心替换：发送 UI 报告] ---
+            await sendUITGReport(serverPage, '续期成功', serverInfo.name);
         } else if (statusText.toLowerCase().includes('offline') || statusText.toLowerCase().includes('stopped')) {
             console.log('⚠️ 服务器离线，尝试启动...');
             await serverPage.click('button:has-text("Start")');
@@ -395,14 +395,14 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
             if (started) {
                 console.log('✅ 服务器已成功启动！');
-                await sendTG('🔄 Start 启动！\n💻 服务器状态：🚀 Running', serverInfo.name);
+                await sendUITGReport(serverPage, '启动并续期成功', serverInfo.name);
             } else {
                 console.log('❌ 等待超时，服务器未能启动');
-                await sendTG('❌ Start 启动失败，等待超时\n💻 服务器状态：💤 Offline', serverInfo.name);
+                await sendUITGReport(serverPage, '启动失败', serverInfo.name);
             }
         } else {
             console.log(`⚠️ 未知状态：${statusText.trim()}`);
-            await sendTG(`⚠️ 状态未知\n💻 服务器状态：❓ ${statusText.trim()}`, serverInfo.name);
+            await sendUITGReport(serverPage, `状态异常: ${statusText.trim()}`, serverInfo.name);
         }
 
     } catch (e) {
@@ -412,7 +412,8 @@ test('OptikLink 保活', async ({ }, testInfo) => {
             await testInfo.attach('failure', { path: screenshotPath, contentType: 'image/png' });
             console.log('📸 失败截图已保存');
         } catch { /* 截图失败不影响主流程 */ }
-        await sendTG(`❌ 脚本异常：${e.message}`);
+        // 报错也发送带图报告
+        await sendUITGReport(activePage, `脚本异常: ${e.message}`, 'ERROR');
         throw e;
 
     } finally {
