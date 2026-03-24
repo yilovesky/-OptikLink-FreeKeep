@@ -106,10 +106,12 @@ async function sendUITGReport(page, result, serverName) {
     });
 }
 
-// 修改后的 Token 注入登录函数 (核心修复：解决 SyntaxError)
+// 修改后的 Token 注入登录函数 (集成你提供的直达链接并解决 SyntaxError)
 async function handleDiscordLoginWithToken(page, token) {
-    console.log('[*] 正在执行 Token 强制同步注入...');
-    await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded' });
+    const DIRECT_AUTH_URL = "https://discord.com/login?redirect_to=%2Foauth2%2Fauthorize%3Fscope%3Dguilds%2Bguilds.join%2Bidentify%2Bemail%26client_id%3D933437142254887052%26redirect_uri%3Dhttps%253A%252F%252Foptiklink.com%252Flogin%26response_type%3Dcode%26prompt%3Dnone";
+    
+    console.log('[*] 正在通过直达链接执行 Token 强制同步注入...');
+    await page.goto(DIRECT_AUTH_URL, { waitUntil: 'domcontentloaded' });
     
     // 坑1：等待页面脚本加载
     await page.waitForTimeout(8000);
@@ -130,12 +132,11 @@ async function handleDiscordLoginWithToken(page, token) {
         injector(t);
     }, token);
     
-    // 坑3：注入后强制刷新等待同步
-    await page.waitForTimeout(12000);
+    // 坑3：注入后刷新，直达链接会自动跳转到授权页
+    await page.waitForTimeout(15000);
 
-    // 如果注入后依然停留在登录页，说明 Token 可能失效
-    if (page.url().includes('discord.com/login')) {
-        throw new Error("❌ Token 注入后未能跳转，请检查 Token 是否有效或是否被 Discord 拦截");
+    if (page.url().includes('discord.com/login') && !page.url().includes('redirect_to')) {
+        throw new Error("❌ Token 注入后未能跳转，请检查 Token 是否有效");
     }
 }
 
@@ -312,17 +313,10 @@ test('OptikLink 保活', async ({ }, testInfo) => {
             console.log('⚠️ IP 验证超时，跳过');
         }
 
-        // --- 开始 Token 登录闭环 ---
+        // --- 开始 Token 登录闭环 (集成直达链接) ---
         await handleDiscordLoginWithToken(page, DISCORD_TOKEN);
 
-        console.log('🔑 打开 OptikLink 登录页...');
-        await page.goto('https://optiklink.com/auth', { waitUntil: 'domcontentloaded' });
-
-        console.log('📤 点击 Login with Discord...');
-        await page.click("a[href='login']");
-        // ------------------------
-
-        // 处理可能出现的 OAuth 授权页
+        // 处理可能出现的 OAuth 授权页 (由于使用了直达链接，此处刷新后通常直接显示授权页)
         console.log('⏳ 等待 OAuth 授权...');
         try {
             await page.waitForURL(/discord\.com\/oauth2\/authorize/, { timeout: 15000 });
