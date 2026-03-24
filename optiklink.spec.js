@@ -8,7 +8,8 @@ const [TG_CHAT_ID, TG_TOKEN] = (process.env.TG_BOT || ',').split(',');
 // 提取 Token
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 
-const TIMEOUT = 60000;
+// 1. 延长超时时间以适配 GitHub Actions 的网络环境
+const TIMEOUT = 120000;
 
 function nowStr() {
     return new Date().toLocaleString('zh-CN', {
@@ -40,9 +41,11 @@ async function sendUITGReport(page, result, serverName) {
     const beijingTime = nowStr();
     const photoPath = `report_${Date.now()}.png`;
 
-    // 1. 截取当前页面截图
+    // 1. 截取当前页面截图 (加入状态检查，防止 closed 报错)
     try {
-        await page.screenshot({ path: photoPath, fullPage: false });
+        if (!page.isClosed()) {
+            await page.screenshot({ path: photoPath, fullPage: false, timeout: 10000 });
+        }
     } catch (e) {
         console.log(`[-] 截图失败: ${e.message}`);
     }
@@ -175,6 +178,9 @@ async function handleOAuthPage(page) {
 }
 
 test('OptikLink 保活', async ({ }, testInfo) => {
+    // 2. 显式设置此 Test 的超时时间
+    test.setTimeout(TIMEOUT);
+
     const proxyUrl = '';
 
     if (!DISCORD_TOKEN) {
@@ -438,13 +444,15 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         }
 
     } catch (e) {
+        console.log(`❌ 异常: ${e.message}`);
+        // 报错也尝试发送带图报告，但增加安全性判断
         try {
-            const screenshotPath = testInfo.outputPath('failure.png');
-            await activePage.screenshot({ path: screenshotPath, fullPage: true });
-            await testInfo.attach('failure', { path: screenshotPath, contentType: 'image/png' });
-            console.log('📸 失败截图已保存');
-        } catch { /* 截图失败不影响主流程 */ }
-        await sendUITGReport(activePage, `脚本异常: ${e.message}`, 'ERROR');
+            if (activePage && !activePage.isClosed()) {
+                await sendUITGReport(activePage, `脚本异常: ${e.message}`, 'ERROR');
+            }
+        } catch (reportErr) {
+            console.log(`[-] 最终错误报告发送失败: ${reportErr.message}`);
+        }
         throw e;
 
     } finally {
