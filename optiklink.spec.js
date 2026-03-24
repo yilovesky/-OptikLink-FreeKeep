@@ -128,7 +128,7 @@ async function handleDiscordLoginWithToken(page, token) {
     console.log('[*] 正在通过直达链接执行 Token 强制同步注入...');
     await page.goto(DIRECT_AUTH_URL, { waitUntil: 'domcontentloaded' });
     
-    // 登录前潜在验证码检测
+    // 登录前潜在验证码检测 (处理进入链接时的拦截)
     await handleCloudflare(page);
 
     // 坑1：等待页面脚本加载
@@ -325,7 +325,7 @@ test('OptikLink 保活', async ({ }, testInfo) => {
             console.log('⚠️ IP 验证超时，跳过');
         }
 
-        // --- 开始 Token 登录闭环 ---
+        // --- 开始 Token 登录闭环 (集成直达链接) ---
         await handleDiscordLoginWithToken(page, DISCORD_TOKEN);
 
         // 处理可能出现的 OAuth 授权页
@@ -340,7 +340,7 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
         console.log('⏳ 确认到达 OptikLink...');
         
-        // 登录后潜在验证码检测 (处理截图中的人机验证)
+        // 登录后潜在验证码检测 (处理授权跳转后的拦截)
         await handleCloudflare(page);
 
         try {
@@ -353,14 +353,18 @@ test('OptikLink 保活', async ({ }, testInfo) => {
         console.log(`✅ 登录成功！当前：${page.url()}`);
 
         console.log('📤 点击 Login to Panel...');
-        await page.waitForLoadState('networkidle');
-        await page.click('a[data-target="#logintopanel"]');
-        await page.waitForTimeout(2000);
+        // 等待 5 秒让 Cloudflare 状态彻底写进 Cookie
+        await page.waitForTimeout(5000); 
+        const panelBtnSelector = 'a[data-target="#logintopanel"]';
+        await page.waitForSelector(panelBtnSelector, { state: 'attached', timeout: 20000 });
 
-        console.log('📤 点击 Panel Login...');
+        // 强行使用底层 JS 点击，彻底避开透明广告层
         const [panelPage] = await Promise.all([
             page.context().waitForEvent('page'),
-            page.click('a[href="https://control.optiklink.net/auth/login"]'),
+            page.evaluate((sel) => {
+                const btn = document.querySelector(sel);
+                if (btn) btn.click();
+            }, panelBtnSelector),
         ]);
 
         panelPage.setDefaultTimeout(TIMEOUT);
