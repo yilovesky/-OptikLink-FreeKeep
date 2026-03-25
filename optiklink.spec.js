@@ -206,22 +206,8 @@ test('OptikLink 保活', async ({ }, testInfo) => {
 
     let proxyConfig = undefined;
     if (process.env.GOST_PROXY) {
-        try {
-            const http = require('http');
-            await new Promise((resolve, reject) => {
-                const req = http.request(
-                    { host: '127.0.0.1', port: 8080, path: '/', method: 'GET', timeout: 3000 },
-                    () => resolve()
-                );
-                req.on('error', reject);
-                req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-                req.end();
-            });
-            proxyConfig = { server: process.env.GOST_PROXY };
-            console.log('🛡️ 本地代理连通，使用 GOST 转发');
-        } catch {
-            console.log('⚠️ 本地代理不可达，降级为直连');
-        }
+        proxyConfig = { server: process.env.GOST_PROXY };
+        console.log(`🛡️ 使用环境变量代理: ${process.env.GOST_PROXY}`);
     } else if (proxyUrl) {
         proxyConfig = { server: proxyUrl };
         console.log(`🛡️ 使用代理: ${proxyUrl.replace(/:\/\/.*@/, '://***@')}`);
