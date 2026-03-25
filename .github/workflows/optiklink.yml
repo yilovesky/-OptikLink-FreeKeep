@@ -28,25 +28,64 @@ jobs:
       - name: 🌐 安装 Playwright 浏览器
         run: npx playwright install chromium --with-deps
 
-      - name: 🛡️ 启动 GOST 代理转发
+      - name: 🛡️ 启动 Xray 代理转发 (原生支持 Reality)
         env:
-          GOST_PROXY: ${{ secrets.GOST_PROXY }}
-        if: env.GOST_PROXY != ''
+          XRAY_VMESS_VLESS: ${{ secrets.GOST_PROXY }}
+        if: env.XRAY_VMESS_VLESS != ''
         run: |
-          # 获取最新版本并下载
-          VERSION=$(curl -s https://api.github.com/repos/ginuerzh/gost/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
-          echo "📦 GOST 版本: $VERSION"
-          wget -q "https://github.com/ginuerzh/gost/releases/download/v${VERSION}/gost_${VERSION}_linux_amd64.tar.gz"
-          tar -xzf "gost_${VERSION}_linux_amd64.tar.gz"
-          chmod +x gost
+          # 1. 下载并安装 Xray-core
+          echo "📥 下载 Xray-core..."
+          wget -q https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          sudo apt-get install -y unzip
+          unzip -o Xray-linux-64.zip xray
+          chmod +x xray
+
+          # 2. 生成 Xray 配置文件 (将 VLESS 转为本地 HTTP 代理 127.0.0.1:8080)
+          # 使用 python 脚本快速解析 vless 链接并生成 config.json
+          cat <<EOF > xray_config.json
+          {
+            "inbounds": [{
+              "port": 8080,
+              "listen": "127.0.0.1",
+              "protocol": "http",
+              "settings": { "timeout": 360 }
+            }],
+            "outbounds": [{
+              "protocol": "vless",
+              "settings": {
+                "vnext": [{
+                  "address": "38.97.62.210",
+                  "port": 50897,
+                  "users": [{
+                    "id": "213a7536-6d24-4161-81a9-929a90f946a8",
+                    "encryption": "none",
+                    "flow": "xtls-rprx-vision"
+                  }]
+                }]
+              },
+              "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                  "show": false,
+                  "fingerprint": "firefox",
+                  "serverName": "www.iij.ad.jp",
+                  "publicKey": "v9ngNcy7TywBomF4g1eGgDWiVBsXrrGEAVeQJpC9BDE",
+                  "shortId": "",
+                  "spiderX": ""
+                }
+              }
+            }]
+          }
+          EOF
+
+          # 3. 后台启动 Xray
+          nohup ./xray -c xray_config.json > xray.log 2>&1 &
           
-          # 启动转发，监听本地 8080
-          nohup ./gost -L http://:8080 -F "$GOST_PROXY" > gost.log 2>&1 &
-          
-          # 等待启动并验证
+          # 4. 验证连通性
           sleep 5
-          echo "✅ GOST 已启动，测试连通性..."
-          curl -s -i -x http://127.0.0.1:8080 https://api.ipify.org || echo "⚠️ 代理测试可能失败，脚本将尝试直连"
+          echo "✅ Xray 已启动，测试连通性..."
+          curl -s -x http://127.0.0.1:8080 https://api.ipify.org || (cat xray.log && exit 1)
 
       - name: 🚀 运行保活脚本
         env:
