@@ -22,6 +22,7 @@ jobs:
       - name: 📦 安装依赖
         run: |
           npm init -y
+          # 必须安装 form-data 以支持带图推送
           npm install @playwright/test form-data
 
       - name: 🌐 安装 Playwright 浏览器
@@ -32,29 +33,36 @@ jobs:
           GOST_PROXY: ${{ secrets.GOST_PROXY }}
         if: env.GOST_PROXY != ''
         run: |
+          # 获取最新版本并下载
           VERSION=$(curl -s https://api.github.com/repos/ginuerzh/gost/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
           echo "📦 GOST 版本: $VERSION"
           wget -q "https://github.com/ginuerzh/gost/releases/download/v${VERSION}/gost_${VERSION}_linux_amd64.tar.gz"
           tar -xzf "gost_${VERSION}_linux_amd64.tar.gz"
           chmod +x gost
+          
+          # 启动转发，监听本地 8080
           nohup ./gost -L http://:8080 -F "$GOST_PROXY" > gost.log 2>&1 &
+          
+          # 等待启动并验证
           sleep 5
           echo "✅ GOST 已启动，测试连通性..."
-          curl -s -x http://127.0.0.1:8080 https://api.ipify.org | sed 's/\([0-9]*\.[0-9]*\.[0-9]*\.\)[0-9]*/\1**/g'
+          curl -s -i -x http://127.0.0.1:8080 https://api.ipify.org || echo "⚠️ 代理测试可能失败，脚本将尝试直连"
 
       - name: 🚀 运行保活脚本
         env:
-          # --- 核心改动：只传 Token ---
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           PANEL_ACCOUNT: ${{ secrets.PANEL_ACCOUNT }}
           TG_BOT: ${{ secrets.TG_BOT }}
+          # 这里的 GOST_PROXY 对应脚本中 if (process.env.GOST_PROXY) 的逻辑
           GOST_PROXY: http://127.0.0.1:8080
         run: npx playwright test optiklink.spec.js
 
-      - name: 📸 上传失败截图
-        if: failure()
+      - name: 📸 上传报告与截图
+        if: always() # 修改为 always，因为成功或失败都可能产生 report_*.png
         uses: actions/upload-artifact@v4
         with:
-          name: failure-screenshots
-          path: test-results/
+          name: execution-results
+          path: |
+            test-results/
+            report_*.png
           retention-days: 7
